@@ -71,7 +71,7 @@ typedef enum v8Type
 class CoreClrFuncInvokeContext
 {
 	private:
-		Nan::Callback* callback;
+		Nan::Persistent<Function>* callback;
 		CoreClrGcHandle task;
 		uv_edge_async_t* uv_edge_async;
 		void* resultData;

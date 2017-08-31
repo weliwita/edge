@@ -59,7 +59,7 @@
       },
       'sources+': [
         'src/common/v8synchronizationcontext.cpp',
-        'src/common/callbackhelper.cpp',
+        
         'src/common/edge.cpp',
         'src/CoreCLREmbedding/coreclrembedding.cpp',
         'src/CoreCLREmbedding/coreclrfunc.cpp',
@@ -182,7 +182,7 @@
               'src/dotnet/clrfuncreflectionwrap.cpp',
               'src/dotnet/clractioncontext.cpp',
               'src/common/v8synchronizationcontext.cpp',
-              'src/common/callbackhelper.cpp',
+              
               'src/common/edge.cpp'
             ]
           },
@@ -203,7 +203,7 @@
                     'src/mono/utils.cpp',
                     'src/common/utils.cpp',
                     'src/common/v8synchronizationcontext.cpp',
-                    'src/common/callbackhelper.cpp',
+                    
                     'src/common/edge.cpp'
                   ],
                   'include_dirs': [

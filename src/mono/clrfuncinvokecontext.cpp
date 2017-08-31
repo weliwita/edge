@@ -29,8 +29,9 @@ ClrFuncInvokeContext::ClrFuncInvokeContext(v8::Local<v8::Value> callbackOrSync) 
     DBG("ClrFuncInvokeContext::ClrFuncInvokeContext");
     if (callbackOrSync->IsFunction())
     {
-        // released in destructor
-        this->callback = new Nan::Callback(v8::Local<v8::Function>::Cast(callbackOrSync));
+        this->callback = new Nan::Persistent<Function>(); // released in destructor
+        v8::Local<v8::Function> callbackOrSyncFunction = v8::Local<v8::Function>::Cast(callbackOrSync);
+        (this->callback)->Reset(callbackOrSyncFunction);
         this->Sync(FALSE);
     }
     else 
@@ -131,14 +132,12 @@ v8::Local<v8::Value> ClrFuncInvokeContext::CompleteOnV8Thread(bool completedSync
     {
         // complete the asynchronous call to C# by invoking a callback in JavaScript
         Nan::TryCatch try_catch;
-        DBG("ClrFuncInvokeContext::CompleteOnV8Thread - calling JS callback");
-        this->callback->Call(argc, argv);
+        Nan::New<v8::Function>(*(this->callback))->Call(Nan::GetCurrentContext()->Global(), argc, argv);
         delete this;
-        if (try_catch.HasCaught())
+        if (try_catch.HasCaught()) 
         {
-            DBG("ClrFuncInvokeContext::CompleteOnV8Thread - exception in callback");
             Nan::FatalException(try_catch);
-        }
+        }        
 
         return scope.Escape(Nan::Undefined());
     }

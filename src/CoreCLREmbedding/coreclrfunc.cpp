@@ -55,7 +55,7 @@ v8::Local<v8::Function> CoreClrFunc::InitializeInstance(CoreClrGcHandle function
 
 	v8::Local<v8::Value> factoryArgv[] = { Nan::New(proxyFunction), Nan::New<v8::External>((void*)wrap) };
 	v8::Local<v8::Function> funcProxy =
-        (Nan::Call(Nan::New(proxyFactory), Nan::GetCurrentContext()->Global(), 2, factoryArgv)).ToLocalChecked().As<v8::Function>();
+		(Nan::New(proxyFactory)->Call(Nan::GetCurrentContext()->Global(), 2, factoryArgv)).As<v8::Function>();
 	Nan::Persistent<v8::Function> funcProxyPersistent(funcProxy);
 	funcProxyPersistent.SetWeak((void*)wrap, &coreClrFuncProxyNearDeath, Nan::WeakCallbackType::kParameter);
 
@@ -458,8 +458,30 @@ v8::Local<v8::Value> CoreClrFunc::MarshalCLRToV8(void* marshalData, int payloadT
 
 		return scope.Escape(result);
 	}
+	else if (payloadType == V8TypeException)
+	{
+		V8ObjectData* objectData = (V8ObjectData*)marshalData;
+		v8::Local<v8::Object> result = Nan::New<v8::Object>();
 
-	else if (payloadType == V8TypeObject || payloadType == V8TypeException)
+		for (int i = 0; i < 8; i++)
+		{
+			result->Set(Nan::New<v8::String>(objectData->propertyNames[i]).ToLocalChecked(), MarshalCLRToV8(objectData->propertyData[i], objectData->propertyTypes[i]));
+		}
+
+		if (payloadType == V8TypeException)
+		{
+			v8::Local<v8::String> name = v8::Local<v8::String>::Cast(result->Get(Nan::New<v8::String>("Name").ToLocalChecked()));
+			v8::Local<v8::String> message = v8::Local<v8::String>::Cast(result->Get(Nan::New<v8::String>("Message").ToLocalChecked()));
+
+			result->SetPrototype(v8::Exception::Error(message));
+			result->Set(Nan::New<v8::String>("message").ToLocalChecked(), message);
+			result->Set(Nan::New<v8::String>("name").ToLocalChecked(), name);
+		}
+
+		return scope.Escape(result);
+	}
+
+	else if (payloadType == V8TypeObject)
 	{
 		V8ObjectData* objectData = (V8ObjectData*) marshalData;
 		v8::Local<v8::Object> result = Nan::New<v8::Object>();
