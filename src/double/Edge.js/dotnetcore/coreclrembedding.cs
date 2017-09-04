@@ -371,7 +371,7 @@ public class CoreCLREmbedding
         }
 
         public string GetAssemblyPath(string assemblyName)
-        {
+        {            
             if (!_libraries.ContainsKey(assemblyName))
             {
                 return null;
@@ -440,7 +440,7 @@ public class CoreCLREmbedding
             {
                 Resolver.LoadDependencyManifest(RuntimeEnvironment.DependencyManifestFile);
             }
-            
+
             DebugMessage("CoreCLREmbedding::Initialize (CLR) - Complete");
         }
 
@@ -455,11 +455,16 @@ public class CoreCLREmbedding
 
     private static Assembly Assembly_Resolving(AssemblyLoadContext arg1, AssemblyName arg2)
     {
-        if (arg2.Name == "System.Core")
+        if (arg2.Name == "netstandard")
         {
             return null;
         }
 
+        if (arg2.Name == "System.Core")
+        {
+            return null;
+        }
+     
         DebugMessage("CoreCLREmbedding::Assembly_Resolving (CLR) - Starting resolve process for {0}", arg2.Name);
 
         if (!String.IsNullOrEmpty(Resolver.GetAssemblyPath(arg2.Name)))
@@ -473,7 +478,7 @@ public class CoreCLREmbedding
 
     [SecurityCritical]
     public static IntPtr GetFunc(string assemblyFile, string typeName, string methodName, IntPtr exception)
-    {
+    {        
         try
         {
             Marshal.WriteIntPtr(exception, IntPtr.Zero);
@@ -496,6 +501,22 @@ public class CoreCLREmbedding
             }
 
             DebugMessage("CoreCLREmbedding::GetFunc (CLR) - Assembly {0} loaded successfully", assemblyFile);
+
+            //try
+            //{
+            //    var alltypes = assembly.GetTypes();
+            //}
+            //catch (ReflectionTypeLoadException e4)
+            //{
+            //    foreach (var item in e4.LoaderExceptions)
+            //    {
+            //        DebugMessage(">>loader exception:{0}", item.ToString());
+            //    }               
+            //}
+            //catch(Exception e)
+            //{
+            //    DebugMessage(">>assembly exception:{0}" + e.ToString());
+            //}
 
             ClrFuncReflectionWrap wrapper = ClrFuncReflectionWrap.Create(assembly, typeName, methodName);
             DebugMessage("CoreCLREmbedding::GetFunc (CLR) - Method {0}.{1}() loaded successfully", typeName, methodName);
@@ -626,7 +647,7 @@ public class CoreCLREmbedding
         try
         {
             DebugMessage("CoreCLREmbedding::CallFunc (CLR) - Starting");
-
+           
             GCHandle wrapperHandle = GCHandle.FromIntPtr(function);
             Func<object, Task<object>> wrapperFunc = (Func<object, Task<object>>)wrapperHandle.Target;
 
@@ -839,7 +860,8 @@ public class CoreCLREmbedding
             case V8Type.Null:
             case V8Type.Function:
                 break;
-
+            case 0: // some property missing in exception class
+                break;
             default:
                 throw new Exception("Unsupported marshalled data type: " + v8Type);
         }
@@ -1118,32 +1140,61 @@ public class CoreCLREmbedding
                         clrObject = targetInvocationException.InnerException;
                     }
                 }
+                List<Tuple<string, Func<object, object>>> propertyAccessors = GetPropertyAccessors(clrObject.GetType());
+                V8ObjectData objectData = new V8ObjectData();
+                int counter = 0;
+
+                objectData.propertiesCount = propertyAccessors.Count;
+                objectData.propertyNames = Marshal.AllocHGlobal(PointerSize * propertyAccessors.Count);
+                objectData.propertyTypes = Marshal.AllocHGlobal(sizeof(int) * propertyAccessors.Count);
+                objectData.propertyValues = Marshal.AllocHGlobal(PointerSize * propertyAccessors.Count);
+
+                foreach (Tuple<string, Func<object, object>> propertyAccessor in propertyAccessors)
+                {
+                    Marshal.WriteIntPtr(objectData.propertyNames, counter * PointerSize, Marshal.StringToHGlobalAnsi(propertyAccessor.Item1));
+
+                    V8Type propertyType;
+                    Console.WriteLine("Marshaling exeption property:" + propertyAccessor.Item1);
+                    if ((propertyAccessor.Item1 != "TargetSite"))
+                    {
+                        Marshal.WriteIntPtr(objectData.propertyValues, counter * PointerSize, MarshalCLRToV8(propertyAccessor.Item2(clrObject), out propertyType));
+                        Marshal.WriteInt32(objectData.propertyTypes, counter * sizeof(int), (int)propertyType);
+                        counter++;
+                    }
+                   
+                }
+                IntPtr destinationPointer = Marshal.AllocHGlobal(V8ObjectDataSize);
+                Marshal.StructureToPtr(objectData, destinationPointer, false);
+
+                return destinationPointer;
             }
-
-            List<Tuple<string, Func<object, object>>> propertyAccessors = GetPropertyAccessors(clrObject.GetType());
-            V8ObjectData objectData = new V8ObjectData();
-            int counter = 0;
-
-            objectData.propertiesCount = propertyAccessors.Count;
-            objectData.propertyNames = Marshal.AllocHGlobal(PointerSize*propertyAccessors.Count);
-            objectData.propertyTypes = Marshal.AllocHGlobal(sizeof (int)*propertyAccessors.Count);
-            objectData.propertyValues = Marshal.AllocHGlobal(PointerSize*propertyAccessors.Count);
-
-            foreach (Tuple<string, Func<object, object>> propertyAccessor in propertyAccessors)
+            else
             {
-                Marshal.WriteIntPtr(objectData.propertyNames, counter*PointerSize, Marshal.StringToHGlobalAnsi(propertyAccessor.Item1));
+                List<Tuple<string, Func<object, object>>> propertyAccessors = GetPropertyAccessors(clrObject.GetType());
+                V8ObjectData objectData = new V8ObjectData();
+                int counter = 0;
 
-                V8Type propertyType;
+                objectData.propertiesCount = propertyAccessors.Count;
+                objectData.propertyNames = Marshal.AllocHGlobal(PointerSize * propertyAccessors.Count);
+                objectData.propertyTypes = Marshal.AllocHGlobal(sizeof(int) * propertyAccessors.Count);
+                objectData.propertyValues = Marshal.AllocHGlobal(PointerSize * propertyAccessors.Count);
 
-                Marshal.WriteIntPtr(objectData.propertyValues, counter*PointerSize, MarshalCLRToV8(propertyAccessor.Item2(clrObject), out propertyType));
-                Marshal.WriteInt32(objectData.propertyTypes, counter*sizeof (int), (int) propertyType);
-                counter++;
-            }
+                foreach (Tuple<string, Func<object, object>> propertyAccessor in propertyAccessors)
+                {
+                    Marshal.WriteIntPtr(objectData.propertyNames, counter * PointerSize, Marshal.StringToHGlobalAnsi(propertyAccessor.Item1));
 
-            IntPtr destinationPointer = Marshal.AllocHGlobal(V8ObjectDataSize);
-            Marshal.StructureToPtr(objectData, destinationPointer, false);
+                    V8Type propertyType;
 
-            return destinationPointer;
+                    Marshal.WriteIntPtr(objectData.propertyValues, counter * PointerSize, MarshalCLRToV8(propertyAccessor.Item2(clrObject), out propertyType));
+                    Marshal.WriteInt32(objectData.propertyTypes, counter * sizeof(int), (int)propertyType);
+                    counter++;
+                }
+
+                IntPtr destinationPointer = Marshal.AllocHGlobal(V8ObjectDataSize);
+                Marshal.StructureToPtr(objectData, destinationPointer, false);
+
+                return destinationPointer;
+            }           
         }
     }
 
