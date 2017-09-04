@@ -175,6 +175,7 @@ pal::string_t GetOSVersion()
 #endif
 }
 
+#if EDGE_PLATFORM_WINDOWS
 void AddToTpaList(std::string directoryPath, std::string* tpaList)
 {
 	const char * const tpaExtensions[] = {
@@ -249,7 +250,6 @@ void AddToTpaList(std::string directoryPath, std::string* tpaList)
 
 	FindClose(fileHandle);
 }
-
 void GetPathToBootstrapper(char* pathToBootstrapper, size_t bufferSize)
 {
 	DWORD dwBufferSize;
@@ -271,17 +271,6 @@ char* GetLoadError()
 
 	return (char*)message;
 }
-
-std::string get_env_var(std::string const & key) {
-	char * val;
-	val = getenv(key.c_str());
-	std::string retval = "";
-	if (val != NULL) {
-		retval = val;
-	}
-	return retval;
-}
-
 HRESULT CoreClrEmbedding::Initialize(BOOL debugMode)
 {
 	trace::setup();
@@ -473,6 +462,258 @@ HRESULT CoreClrEmbedding::Initialize(BOOL debugMode)
 
     return S_OK;
 }
+#else
+void AddToTpaList(const char* directory, std::string& tpaList){
+	const char * const tpaExtensions[] = {
+                ".ni.dll",      // Probe for .ni.dll first so that it's preferred if ni and il coexist in the same dir
+                ".dll",
+                ".ni.exe",
+                ".exe",
+                };
+
+    DIR* dir = opendir(directory);
+    if (dir == nullptr)
+    {
+        return;
+    }
+
+    std::set<std::string> addedAssemblies;
+
+    // Walk the directory for each extension separately so that we first get files with .ni.dll extension,
+    // then files with .dll extension, etc.
+    for (int extIndex = 0; extIndex < sizeof(tpaExtensions) / sizeof(tpaExtensions[0]); extIndex++)
+    {
+        const char* ext = tpaExtensions[extIndex];
+        int extLength = strlen(ext);
+
+        struct dirent* entry;
+
+        // For all entries in the directory
+        while ((entry = readdir(dir)) != nullptr)
+        {
+            // We are interested in files only
+            switch (entry->d_type)
+            {
+            case DT_REG:
+                break;
+
+            // Handle symlinks and file systems that do not support d_type
+            case DT_LNK:
+            case DT_UNKNOWN:
+                {
+                    std::string fullFilename;
+
+                    fullFilename.append(directory);
+                    fullFilename.append("/");
+                    fullFilename.append(entry->d_name);
+
+                    struct stat sb;
+                    if (stat(fullFilename.c_str(), &sb) == -1)
+                    {
+                        continue;
+                    }
+
+                    if (!S_ISREG(sb.st_mode))
+                    {
+                        continue;
+                    }
+                }
+                break;
+
+            default:
+                continue;
+            }
+
+            std::string filename(entry->d_name);
+
+            // Check if the extension matches the one we are looking for
+            int extPos = filename.length() - extLength;
+            if ((extPos <= 0) || (filename.compare(extPos, extLength, ext) != 0))
+            {
+                continue;
+            }
+
+            std::string filenameWithoutExt(filename.substr(0, extPos));
+
+            // Make sure if we have an assembly with multiple extensions present,
+            // we insert only one version of it.
+            if (addedAssemblies.find(filenameWithoutExt) == addedAssemblies.end())
+            {
+                addedAssemblies.insert(filenameWithoutExt);
+
+                tpaList.append(directory);
+                tpaList.append("/");
+                tpaList.append(filename);
+                tpaList.append(":");
+            }
+        }
+        
+        // Rewind the directory stream to be able to iterate over it for the next extension
+        rewinddir(dir);
+    }
+    
+    closedir(dir);
+}
+HRESULT CoreClrEmbedding::Initialize(BOOL debugMode)
+{
+	trace::setup();
+
+	pal::string_t edgeDebug;
+	pal::getenv(_X("EDGE_DEBUG"), &edgeDebug);
+
+	if (edgeDebug.length() > 0)
+	{
+		trace::enable();
+	}
+
+	trace::info(_X("CoreClrEmbedding::Initialize - Started"));
+	HRESULT result = S_OK;
+	pal::string_t functionNameString;
+	// std::string coreClrDllPath("/usr/share/dotnet/shared/Microsoft.NETCore.App/2.0.0-preview2-25407-01/libcoreclr.so");
+    // void* coreclrLib = dlopen(coreClrDllPath.c_str(), RTLD_NOW | RTLD_LOCAL);
+
+	std::string coreClrFilesAbsolutePath("/usr/share/dotnet/shared/Microsoft.NETCore.App/2.0.0-preview2-25407-01");
+    
+	std::string tpaList;
+	AddToTpaList(coreClrFilesAbsolutePath.c_str(), tpaList);
+
+	trace::info(tpaList.c_str());
+
+	std::string appPath("/home/rasika/Work/electronintegration.sample/edge-dotnet-proxy/bin/Debug/netstandard2.0/publish/");
+ 	std::string nativeDllSearchDirs(appPath);
+	const char* useServerGc = "false"; //GetEnvValueBoolean(serverGcVar);      
+    const char* globalizationInvariant = "false"; //GetEnvValueBoolean(globalizationInvariantVar);
+
+	// Build CoreCLR properties
+	std::vector<const char*> property_keys = {
+				"TRUSTED_PLATFORM_ASSEMBLIES",
+                "APP_PATHS",
+                "APP_NI_PATHS",
+                "NATIVE_DLL_SEARCH_DIRECTORIES",
+                "System.GC.Server",
+                "System.Globalization.Invariant"
+	};
+
+	std::vector<const char*> property_values = {
+			// TRUSTED_PLATFORM_ASSEMBLIES
+			tpaList.c_str(),
+			// APP_PATHS
+			appPath.c_str(),
+			// APP_NI_PATHS
+			appPath.c_str(),
+			// NATIVE_DLL_SEARCH_DIRECTORIES
+			nativeDllSearchDirs.c_str(),
+			// System.GC.Server
+			useServerGc,
+			// System.Globalization.Invariant
+			globalizationInvariant,
+	};
+
+	trace::info(_X("Calling coreclr_initialize()"));
+
+	pal::string_t clrdirpal(_X("/usr/share/dotnet/shared/Microsoft.NETCore.App/2.0.0-preview2-25407-01"));
+    // 
+	if(coreclr::bind(clrdirpal)){
+		trace::info(_X("failedtobind"));
+	};
+	coreclr::host_handle_t host_handle;
+	coreclr::domain_id_t domain_id;
+
+	//N_EDGE_BOOTSTRAPPER_DIR
+	pal::string_t bootstrapper_path;
+	pal::getenv(_X("N_EDGE_BOOTSTRAPPER_PATH"), &bootstrapper_path);
+
+	std::vector<char> bootstrapperCstr;
+	pal::pal_clrstring(bootstrapper_path, &bootstrapperCstr);
+
+	auto hr = coreclr::initialize(
+		bootstrapperCstr.data(),
+		"Edge",
+		&property_keys[0],
+		&property_values[0],
+		sizeof(property_keys) / sizeof(property_keys[0]),
+		&host_handle,
+		&domain_id);
+
+	if (!SUCCEEDED(hr))
+	{
+		trace::error(_X("CoreClrEmbedding::Initialize - Failed to initialize CoreCLR, HRESULT: 0x%X"), hr);
+		return StatusCode::CoreClrInitFailure;
+	}
+
+	trace::info(_X("CoreCLR initialized successfully"));
+
+
+	SetCallV8FunctionDelegateFunction setCallV8Function;
+
+	CREATE_DELEGATE("GetFunc", &getFunc);
+	CREATE_DELEGATE("CallFunc", &callFunc);
+	CREATE_DELEGATE("ContinueTask", &continueTask);
+	CREATE_DELEGATE("FreeHandle", &freeHandle);
+	CREATE_DELEGATE("FreeMarshalData", &freeMarshalData);
+	CREATE_DELEGATE("SetCallV8FunctionDelegate", &setCallV8Function);
+	CREATE_DELEGATE("Initialize", &initialize);
+	trace::info(_X("Finished creating delegates"));
+	
+	trace::info(_X("App domain created successfully (app domain ID: %d)"), domain_id);
+	CoreClrGcHandle exception = NULL;
+	std::string deps = "/home/rasika/Work/electronintegration.sample/edge-dotnet-proxy/bin/Debug/netstandard2.0/publish/NugetTest.deps.json";
+	BootstrapperContext context = { "a","b", deps.c_str() };
+
+	// call edge delegate
+	trace::info(_X("calling c# delegate"));
+	initialize(&context, &exception);
+	trace::info(_X("end calling c# delegate"));
+	if (exception)
+	{
+		v8::Local<v8::Value> v8Exception = CoreClrFunc::MarshalCLRToV8(exception, V8TypeException);
+		FreeMarshalData(exception, V8TypeException);
+
+		throwV8Exception(v8Exception);
+		return E_FAIL;
+	}
+
+	else
+	{
+		trace::info(_X("CoreClrEmbedding::Initialize - CLR Initialize() function called successfully"));
+	}
+
+	exception = NULL;
+	setCallV8Function(CoreClrNodejsFunc::Call, &exception);
+
+	if (exception)
+	{
+		v8::Local<v8::Value> v8Exception = CoreClrFunc::MarshalCLRToV8(exception, V8TypeException);
+		FreeMarshalData(exception, V8TypeException);
+
+		throwV8Exception(v8Exception);
+		return E_FAIL;
+	}
+
+	else
+	{
+		trace::info(_X("CoreClrEmbedding::Initialize - CallV8Function delegate set successfully"));
+	}
+
+	trace::info(_X("CoreClrEmbedding::Initialize - Completed"));
+
+    return S_OK;
+
+}
+#endif
+
+
+std::string get_env_var(std::string const & key) {
+	char * val;
+	val = getenv(key.c_str());
+	std::string retval = "";
+	if (val != NULL) {
+		retval = val;
+	}
+	return retval;
+}
+
+
 
 CoreClrGcHandle CoreClrEmbedding::GetClrFuncReflectionWrapFunc(const char* assemblyFile, const char* typeName, const char* methodName, v8::Local<v8::Value>* v8Exception)
 {
