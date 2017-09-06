@@ -175,16 +175,6 @@ pal::string_t GetOSVersion()
 #endif
 }
 
-std::string get_env_var(std::string const & key) {
-	char * val;
-	val = getenv(key.c_str());
-	std::string retval = "";
-	if (val != NULL) {
-		retval = val;
-	}
-	return retval;
-}
-
 #if EDGE_PLATFORM_WINDOWS
 void AddToTpaList(std::string directoryPath, std::string& tpaList)
 {
@@ -267,162 +257,6 @@ char* GetLoadError()
 	FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM, NULL, GetLastError(), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPTSTR)&message, 0, NULL);
 
 	return (char*)message;
-}
-
-HRESULT CoreClrEmbedding::Initialize(BOOL debugMode)
-{
-	trace::setup();
-
-	pal::string_t edgeDebug;
-	pal::getenv(_X("EDGE_DEBUG"), &edgeDebug);
-
-	if (edgeDebug.length() > 0)
-	{
-		trace::enable();
-	}
-
-	trace::info(_X("CoreClrEmbedding::Initialize - 1Started-111"));
-
-	HRESULT result = S_OK;
-	pal::string_t functionNameString;
-
-
-	//
-	//variables
-	//
-	pal::string_t edgeClrDir;
-	pal::getenv(_X("N_EDGE_CLR_DIR"), &edgeClrDir);
-	std::vector<char> edgeClrDir_cstr;
-	pal::pal_clrstring(edgeClrDir, &edgeClrDir_cstr);
-	
-	std::string tpaList;
-	AddToTpaList(edgeClrDir_cstr.data(), tpaList);
-
-	pal::string_t appPath;
-	pal::getenv(_X("EDGE_APP_ROOT"), &appPath);
-
-	std::vector<char> appPath_cstr;
-	pal::pal_clrstring(appPath, &appPath_cstr);
-
-	const char* useServerGc = "false"; //GetEnvValueBoolean(serverGcVar);      
-	const char* globalizationInvariant = "false"; //GetEnvValueBoolean(globalizationInvariantVar);
-												  // Build CoreCLR properties
-	std::vector<const char*> property_keys = {
-		"TRUSTED_PLATFORM_ASSEMBLIES",
-		"APP_PATHS",
-		"APP_NI_PATHS",
-		"NATIVE_DLL_SEARCH_DIRECTORIES",
-		"System.GC.Server",
-		"System.Globalization.Invariant"
-	};
-
-	std::vector<const char*> property_values = {
-		// TRUSTED_PLATFORM_ASSEMBLIES
-		tpaList.c_str(),
-		// APP_PATHS
-		appPath_cstr.data(),
-		// APP_NI_PATHS
-		appPath_cstr.data(),
-		// NATIVE_DLL_SEARCH_DIRECTORIES
-		appPath_cstr.data(),
-		// System.GC.Server
-		useServerGc,
-		// System.Globalization.Invariant
-		globalizationInvariant,
-	};
-
-	trace::info(_X("Calling coreclr_initialize()"));
-	if (coreclr::bind(edgeClrDir)) {
-		trace::info(_X("failed to bind "));
-	};
-	coreclr::host_handle_t host_handle;
-	coreclr::domain_id_t domain_id;
-
-	//N_EDGE_BOOTSTRAPPER_DIR
-	pal::string_t bootstrapper_path;
-	pal::getenv(_X("N_EDGE_BOOTSTRAPPER_PATH"), &bootstrapper_path);
-
-	std::vector<char> bootstrapperCstr;
-	pal::pal_clrstring(bootstrapper_path, &bootstrapperCstr);
-
-	auto hr = coreclr::initialize(
-		bootstrapperCstr.data(),
-		"Edge",
-		&property_keys[0],
-		&property_values[0],
-		sizeof(property_keys) / sizeof(property_keys[0]),
-		&host_handle,
-		&domain_id);
-
-	if (!SUCCEEDED(hr))
-	{
-		trace::error(_X("CoreClrEmbedding::Initialize - Failed to initialize CoreCLR, HRESULT: 0x%X"), hr);
-		return StatusCode::CoreClrInitFailure;
-	}
-
-	trace::info(_X("CoreCLR initialized successfully"));
-
-
-	SetCallV8FunctionDelegateFunction setCallV8Function;
-
-	CREATE_DELEGATE("GetFunc", &getFunc);
-	CREATE_DELEGATE("CallFunc", &callFunc);
-	CREATE_DELEGATE("ContinueTask", &continueTask);
-	CREATE_DELEGATE("FreeHandle", &freeHandle);
-	CREATE_DELEGATE("FreeMarshalData", &freeMarshalData);
-	CREATE_DELEGATE("SetCallV8FunctionDelegate", &setCallV8Function);
-	CREATE_DELEGATE("Initialize", &initialize);
-	trace::info(_X("Finished creating delegates"));
-
-	trace::info(_X("App domain created successfully (app domain ID: %d)"), domain_id);
-	CoreClrGcHandle exception = NULL;
-
-	pal::string_t depsFile = pal::string_t(appPath);
-	append_path(&depsFile, _X("NugetTest.deps.json")); // todo this depends on the wrapper app name.
-
-	std::vector<char> depsFile_cstr;
-	pal::pal_clrstring(depsFile, &depsFile_cstr);
-	
-	BootstrapperContext context = { "a","b", depsFile_cstr.data() };
-
-	// call edge delegate
-	trace::info(_X("calling c# delegate"));
-	initialize(&context, &exception);
-	trace::info(_X("end calling c# delegate"));
-	if (exception)
-	{
-		v8::Local<v8::Value> v8Exception = CoreClrFunc::MarshalCLRToV8(exception, V8TypeException);
-		FreeMarshalData(exception, V8TypeException);
-
-		throwV8Exception(v8Exception);
-		return E_FAIL;
-	}
-
-	else
-	{
-		trace::info(_X("CoreClrEmbedding::Initialize - CLR Initialize() function called successfully"));
-	}
-
-	exception = NULL;
-	setCallV8Function(CoreClrNodejsFunc::Call, &exception);
-
-	if (exception)
-	{
-		v8::Local<v8::Value> v8Exception = CoreClrFunc::MarshalCLRToV8(exception, V8TypeException);
-		FreeMarshalData(exception, V8TypeException);
-
-		throwV8Exception(v8Exception);
-		return E_FAIL;
-	}
-
-	else
-	{
-		trace::info(_X("CoreClrEmbedding::Initialize - CallV8Function delegate set successfully"));
-	}
-
-	trace::info(_X("CoreClrEmbedding::Initialize - Completed"));
-
-	return S_OK;
 }
 #else
 void AddToTpaList(const char* directory, std::string& tpaList){
@@ -516,6 +350,7 @@ void AddToTpaList(const char* directory, std::string& tpaList){
     
     closedir(dir);
 }
+#endif
 HRESULT CoreClrEmbedding::Initialize(BOOL debugMode)
 {
 	trace::setup();
@@ -671,8 +506,6 @@ HRESULT CoreClrEmbedding::Initialize(BOOL debugMode)
 
 	return S_OK;
 }
-#endif
-
 
 CoreClrGcHandle CoreClrEmbedding::GetClrFuncReflectionWrapFunc(const char* assemblyFile, const char* typeName, const char* methodName, v8::Local<v8::Value>* v8Exception)
 {
