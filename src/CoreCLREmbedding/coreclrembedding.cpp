@@ -175,8 +175,18 @@ pal::string_t GetOSVersion()
 #endif
 }
 
+std::string get_env_var(std::string const & key) {
+	char * val;
+	val = getenv(key.c_str());
+	std::string retval = "";
+	if (val != NULL) {
+		retval = val;
+	}
+	return retval;
+}
+
 #if EDGE_PLATFORM_WINDOWS
-void AddToTpaList(std::string directoryPath, std::string* tpaList)
+void AddToTpaList(std::string directoryPath, std::string& tpaList)
 {
 	const char * const tpaExtensions[] = {
 		".ni.dll",
@@ -233,10 +243,10 @@ void AddToTpaList(std::string directoryPath, std::string* tpaList)
 			{
 				addedAssemblies.insert(filenameWithoutExtension);
 
-				tpaList->append(directoryPath);
-				tpaList->append("\\");
-				tpaList->append(filename);
-				tpaList->append(";");
+				tpaList.append(directoryPath);
+				tpaList.append("\\");
+				tpaList.append(filename);
+				tpaList.append(";");
 
 				//LOG("Added %s to the TPA list", filename.c_str());
 			}
@@ -250,19 +260,6 @@ void AddToTpaList(std::string directoryPath, std::string* tpaList)
 
 	FindClose(fileHandle);
 }
-void GetPathToBootstrapper(char* pathToBootstrapper, size_t bufferSize)
-{
-	DWORD dwBufferSize;
-	SIZETToDWord(bufferSize, &dwBufferSize);
-
-	size_t pathLength = GetModuleFileName(GetModuleHandle(NULL), pathToBootstrapper, dwBufferSize); // NULL mean path name of the current executable file.
-	pathToBootstrapper[pathLength] = '\0';
-}
-
-void* LoadSymbol(void* library, const char* symbolName)
-{
-	return GetProcAddress((HMODULE)library, symbolName); // get address of exported function in a dll
-}
 
 char* GetLoadError()
 {
@@ -271,6 +268,7 @@ char* GetLoadError()
 
 	return (char*)message;
 }
+
 HRESULT CoreClrEmbedding::Initialize(BOOL debugMode)
 {
 	trace::setup();
@@ -283,103 +281,60 @@ HRESULT CoreClrEmbedding::Initialize(BOOL debugMode)
 		trace::enable();
 	}
 
-	trace::info(_X("CoreClrEmbedding::Initialize - Started"));
+	trace::info(_X("CoreClrEmbedding::Initialize - 1Started-111"));
 
-    HRESULT result = S_OK;
+	HRESULT result = S_OK;
 	pal::string_t functionNameString;
-	char currentDirectory[MAX_PATH];
 
-	if (!_getcwd(&currentDirectory[0], MAX_PATH))
-	{
-		trace::info(_X("Unable to get the current directory"));
-		return E_FAIL;
-	}
-	std::vector<char> edgeNodePathCstr;
 
-	char tempEdgeNodePath[MAX_PATH]; //module/exe where main/inintializemethod loaded.
-									 //LOG("Maxpath %d",MAX_PATH); //260
-	HMODULE moduleHandle = NULL; //hsndle to initialize method??
-
-	GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)&CoreClrEmbedding::Initialize, &moduleHandle);
-	GetModuleFileName(moduleHandle, tempEdgeNodePath, MAX_PATH);
-
-	//trace::info(_X("CoreClrEmbedding::Initialize - temp edge.node path is %s", tempEdgeNodePath));
-
-	std::string edgeNodePath(tempEdgeNodePath); // now it is at tempedgenodepath
-	//trace::info(_X("CoreClrEmbedding::Initialize - edge.node path is %s", edgeNodePath.c_str()));
-
-	char bootstrapper[MAX_PATH]; // path to executlable file as char array.
-	GetPathToBootstrapper(&bootstrapper[0], MAX_PATH);
-	//trace::info(_X("CoreClrEmbedding::Initialize - Bootstrapper is %s"), bootstrapper);
-
+	//
+	//variables
+	//
+	pal::string_t edgeClrDir;
+	pal::getenv(_X("N_EDGE_CLR_DIR"), &edgeClrDir);
+	std::vector<char> edgeClrDir_cstr;
+	pal::pal_clrstring(edgeClrDir, &edgeClrDir_cstr);
 	
-	std::string clrdir = get_env_var("N_EDGE_CLR_DIR");
-	pal::string_t clrdirpal;
-	pal::getenv(_X("N_EDGE_CLR_DIR"), &clrdirpal);
-
-	char coreCLRDirectory[MAX_PATH];
-	strcpy(&coreCLRDirectory[0], clrdir.c_str());
-
 	std::string tpaList;
-	AddToTpaList(coreCLRDirectory, &tpaList);
-	//LOG("CoreClrEmbedding::Initialize - tpalist is %s", tpaList.c_str());
+	AddToTpaList(edgeClrDir_cstr.data(), tpaList);
 
-	std::string appPaths = get_env_var("N_EDGE_APP_DIR");
-	std::cout << "=======appPaths============" << std::endl;
-	std::cout << appPaths << std::endl;
-	
-	//std::string native_dirs = "C:\\Program Files\\dotnet\\shared\\Microsoft.NETCore.App\\2.0.0-preview1-002111-00";
-	std::string native_dirs = clrdir;
-	std::string resources_dirs = "";
-	
-	//std::string app_base = "D:\\r\\NugetTest\\bin\\X64\\Debug\\netstandard2.0";
-	std::string app_base = appPaths;
+	pal::string_t appPath;
+	pal::getenv(_X("EDGE_APP_ROOT"), &appPath);
 
-	std::string deps = app_base + "\\NugetTest.deps.json";
+	std::vector<char> appPath_cstr;
+	pal::pal_clrstring(appPath, &appPath_cstr);
 
-	std::string fx_deps = clrdir + "Microsoft.NETCore.App.deps.json";
-
-	// Build CoreCLR properties
+	const char* useServerGc = "false"; //GetEnvValueBoolean(serverGcVar);      
+	const char* globalizationInvariant = "false"; //GetEnvValueBoolean(globalizationInvariantVar);
+												  // Build CoreCLR properties
 	std::vector<const char*> property_keys = {
 		"TRUSTED_PLATFORM_ASSEMBLIES",
 		"APP_PATHS",
 		"APP_NI_PATHS",
 		"NATIVE_DLL_SEARCH_DIRECTORIES",
-		"PLATFORM_RESOURCE_ROOTS",
-		"AppDomainCompatSwitch",
-		// Workaround: mscorlib does not resolve symlinks for AppContext.BaseDirectory dotnet/coreclr/issues/2128
-		"APP_CONTEXT_BASE_DIRECTORY",
-		"APP_CONTEXT_DEPS_FILES",
-		"FX_DEPS_FILE"
+		"System.GC.Server",
+		"System.Globalization.Invariant"
 	};
 
-	std::string additionalNugetDeps = get_env_var("N_EDGE_NUGET_DLLS");
-	
-
-	tpaList.append(additionalNugetDeps);
 	std::vector<const char*> property_values = {
 		// TRUSTED_PLATFORM_ASSEMBLIES
 		tpaList.c_str(),
 		// APP_PATHS
-		appPaths.c_str(),
+		appPath_cstr.data(),
 		// APP_NI_PATHS
-		&currentDirectory[0], //
+		appPath_cstr.data(),
 		// NATIVE_DLL_SEARCH_DIRECTORIES
-		native_dirs.c_str(),
-		// PLATFORM_RESOURCE_ROOTS
-		resources_dirs.c_str(),
-		// AppDomainCompatSwitch
-		"UseLatestBehaviorWhenTFMNotSpecified",
-		// APP_CONTEXT_BASE_DIRECTORY
-		app_base.c_str(),
-		// APP_CONTEXT_DEPS_FILES,
-		deps.c_str(),
-		// FX_DEPS_FILE
-		fx_deps.c_str()
+		appPath_cstr.data(),
+		// System.GC.Server
+		useServerGc,
+		// System.Globalization.Invariant
+		globalizationInvariant,
 	};
 
 	trace::info(_X("Calling coreclr_initialize()"));
-	coreclr::bind(clrdirpal);
+	if (coreclr::bind(edgeClrDir)) {
+		trace::info(_X("failed to bind "));
+	};
 	coreclr::host_handle_t host_handle;
 	coreclr::domain_id_t domain_id;
 
@@ -418,10 +373,17 @@ HRESULT CoreClrEmbedding::Initialize(BOOL debugMode)
 	CREATE_DELEGATE("SetCallV8FunctionDelegate", &setCallV8Function);
 	CREATE_DELEGATE("Initialize", &initialize);
 	trace::info(_X("Finished creating delegates"));
-	
+
 	trace::info(_X("App domain created successfully (app domain ID: %d)"), domain_id);
 	CoreClrGcHandle exception = NULL;
-	BootstrapperContext context = { "a","b", deps.c_str() };
+
+	pal::string_t depsFile = pal::string_t(appPath);
+	append_path(&depsFile, _X("NugetTest.deps.json")); // todo this depends on the wrapper app name.
+
+	std::vector<char> depsFile_cstr;
+	pal::pal_clrstring(depsFile, &depsFile_cstr);
+	
+	BootstrapperContext context = { "a","b", depsFile_cstr.data() };
 
 	// call edge delegate
 	trace::info(_X("calling c# delegate"));
@@ -460,7 +422,7 @@ HRESULT CoreClrEmbedding::Initialize(BOOL debugMode)
 
 	trace::info(_X("CoreClrEmbedding::Initialize - Completed"));
 
-    return S_OK;
+	return S_OK;
 }
 #else
 void AddToTpaList(const char* directory, std::string& tpaList){
@@ -566,55 +528,59 @@ HRESULT CoreClrEmbedding::Initialize(BOOL debugMode)
 		trace::enable();
 	}
 
-	trace::info(_X("CoreClrEmbedding::Initialize - Started"));
+	trace::info(_X("CoreClrEmbedding::Initialize - 1Started-111"));
+
 	HRESULT result = S_OK;
 	pal::string_t functionNameString;
-	// std::string coreClrDllPath("/usr/share/dotnet/shared/Microsoft.NETCore.App/2.0.0-preview2-25407-01/libcoreclr.so");
-    // void* coreclrLib = dlopen(coreClrDllPath.c_str(), RTLD_NOW | RTLD_LOCAL);
 
-	std::string coreClrFilesAbsolutePath("/usr/share/dotnet/shared/Microsoft.NETCore.App/2.0.0-preview2-25407-01");
-    
+
+	//
+	//variables
+	//
+	pal::string_t edgeClrDir;
+	pal::getenv(_X("N_EDGE_CLR_DIR"), &edgeClrDir);
+	std::vector<char> edgeClrDir_cstr;
+	pal::pal_clrstring(edgeClrDir, &edgeClrDir_cstr);
+
 	std::string tpaList;
-	AddToTpaList(coreClrFilesAbsolutePath.c_str(), tpaList);
+	AddToTpaList(edgeClrDir_cstr.data(), tpaList);
 
-	trace::info(tpaList.c_str());
+	pal::string_t appPath;
+	pal::getenv(_X("EDGE_APP_ROOT"), &appPath);
 
-	std::string appPath("/home/rasika/Work/electronintegration.sample/edge-dotnet-proxy/bin/Debug/netstandard2.0/publish/");
- 	std::string nativeDllSearchDirs(appPath);
+	std::vector<char> appPath_cstr;
+	pal::pal_clrstring(appPath, &appPath_cstr);
+
 	const char* useServerGc = "false"; //GetEnvValueBoolean(serverGcVar);      
-    const char* globalizationInvariant = "false"; //GetEnvValueBoolean(globalizationInvariantVar);
-
-	// Build CoreCLR properties
+	const char* globalizationInvariant = "false"; //GetEnvValueBoolean(globalizationInvariantVar);
+												  // Build CoreCLR properties
 	std::vector<const char*> property_keys = {
-				"TRUSTED_PLATFORM_ASSEMBLIES",
-                "APP_PATHS",
-                "APP_NI_PATHS",
-                "NATIVE_DLL_SEARCH_DIRECTORIES",
-                "System.GC.Server",
-                "System.Globalization.Invariant"
+		"TRUSTED_PLATFORM_ASSEMBLIES",
+		"APP_PATHS",
+		"APP_NI_PATHS",
+		"NATIVE_DLL_SEARCH_DIRECTORIES",
+		"System.GC.Server",
+		"System.Globalization.Invariant"
 	};
 
 	std::vector<const char*> property_values = {
-			// TRUSTED_PLATFORM_ASSEMBLIES
-			tpaList.c_str(),
-			// APP_PATHS
-			appPath.c_str(),
-			// APP_NI_PATHS
-			appPath.c_str(),
-			// NATIVE_DLL_SEARCH_DIRECTORIES
-			nativeDllSearchDirs.c_str(),
-			// System.GC.Server
-			useServerGc,
-			// System.Globalization.Invariant
-			globalizationInvariant,
+		// TRUSTED_PLATFORM_ASSEMBLIES
+		tpaList.c_str(),
+		// APP_PATHS
+		appPath_cstr.data(),
+		// APP_NI_PATHS
+		appPath_cstr.data(),
+		// NATIVE_DLL_SEARCH_DIRECTORIES
+		appPath_cstr.data(),
+		// System.GC.Server
+		useServerGc,
+		// System.Globalization.Invariant
+		globalizationInvariant,
 	};
 
 	trace::info(_X("Calling coreclr_initialize()"));
-
-	pal::string_t clrdirpal(_X("/usr/share/dotnet/shared/Microsoft.NETCore.App/2.0.0-preview2-25407-01"));
-    // 
-	if(coreclr::bind(clrdirpal)){
-		trace::info(_X("failedtobind"));
+	if (coreclr::bind(edgeClrDir)) {
+		trace::info(_X("failed to bind "));
 	};
 	coreclr::host_handle_t host_handle;
 	coreclr::domain_id_t domain_id;
@@ -654,11 +620,17 @@ HRESULT CoreClrEmbedding::Initialize(BOOL debugMode)
 	CREATE_DELEGATE("SetCallV8FunctionDelegate", &setCallV8Function);
 	CREATE_DELEGATE("Initialize", &initialize);
 	trace::info(_X("Finished creating delegates"));
-	
+
 	trace::info(_X("App domain created successfully (app domain ID: %d)"), domain_id);
 	CoreClrGcHandle exception = NULL;
-	std::string deps = "/home/rasika/Work/electronintegration.sample/edge-dotnet-proxy/bin/Debug/netstandard2.0/publish/NugetTest.deps.json";
-	BootstrapperContext context = { "a","b", deps.c_str() };
+
+	pal::string_t depsFile = pal::string_t(appPath);
+	append_path(&depsFile, _X("NugetTest.deps.json")); // todo this depends on the wrapper app name.
+
+	std::vector<char> depsFile_cstr;
+	pal::pal_clrstring(depsFile, &depsFile_cstr);
+
+	BootstrapperContext context = { "a","b", depsFile_cstr.data() };
 
 	// call edge delegate
 	trace::info(_X("calling c# delegate"));
@@ -697,22 +669,9 @@ HRESULT CoreClrEmbedding::Initialize(BOOL debugMode)
 
 	trace::info(_X("CoreClrEmbedding::Initialize - Completed"));
 
-    return S_OK;
-
+	return S_OK;
 }
 #endif
-
-
-std::string get_env_var(std::string const & key) {
-	char * val;
-	val = getenv(key.c_str());
-	std::string retval = "";
-	if (val != NULL) {
-		retval = val;
-	}
-	return retval;
-}
-
 
 
 CoreClrGcHandle CoreClrEmbedding::GetClrFuncReflectionWrapFunc(const char* assemblyFile, const char* typeName, const char* methodName, v8::Local<v8::Value>* v8Exception)
