@@ -121,6 +121,7 @@ public class CoreCLREmbedding
         }
     }
 
+    // custom container for assemblies to load, if assembly cant be loaded here it will find in default load context.
     private class EdgeAssemblyLoadContext : AssemblyLoadContext
     {
         protected override IntPtr LoadUnmanagedDll(string unmanagedDllName)
@@ -211,27 +212,27 @@ public class CoreCLREmbedding
         {
             DebugMessage("EdgeAssemblyResolver::LoadDependencyManifest (CLR) - Loading dependency manifest from {0}", dependencyManifestFile);
             
-            DependencyContextJsonReader dependencyContextReader = new DependencyContextJsonReader();
+            //DependencyContextJsonReader dependencyContextReader = new DependencyContextJsonReader();
 
-            using (FileStream dependencyManifestStream = new FileStream(dependencyManifestFile, FileMode.Open, FileAccess.Read))
-            {
-                DebugMessage("EdgeAssemblyResolver::LoadDependencyManifest (CLR) - Reading dependency manifest file and merging in dependencies from the shared runtime");
-                DependencyContext dependencyContext = dependencyContextReader.Read(dependencyManifestStream);
+            //using (FileStream dependencyManifestStream = new FileStream(dependencyManifestFile, FileMode.Open, FileAccess.Read))
+            //{
+            //    DebugMessage("EdgeAssemblyResolver::LoadDependencyManifest (CLR) - Reading dependency manifest file and merging in dependencies from the shared runtime");
+            //    DependencyContext dependencyContext = dependencyContextReader.Read(dependencyManifestStream);
 
-                string runtimeDependencyManifestFile = (string)AppContext.GetData("FX_DEPS_FILE");
+            //    string runtimeDependencyManifestFile = (string)AppContext.GetData("FX_DEPS_FILE");
 
-                if (!String.IsNullOrEmpty(runtimeDependencyManifestFile) && runtimeDependencyManifestFile != dependencyManifestFile)
-                {
-                    DebugMessage("EdgeAssemblyResolver::LoadDependencyManifest (CLR) - Merging in the dependency manifest from the shared runtime at {0}", runtimeDependencyManifestFile);
+            //    if (!String.IsNullOrEmpty(runtimeDependencyManifestFile) && runtimeDependencyManifestFile != dependencyManifestFile)
+            //    {
+            //        DebugMessage("EdgeAssemblyResolver::LoadDependencyManifest (CLR) - Merging in the dependency manifest from the shared runtime at {0}", runtimeDependencyManifestFile);
 
-                    using (FileStream runtimeDependencyManifestStream = new FileStream(runtimeDependencyManifestFile, FileMode.Open, FileAccess.Read))
-                    {
-                        dependencyContext = dependencyContext.Merge(dependencyContextReader.Read(runtimeDependencyManifestStream));
-                    }
-                }
+            //        using (FileStream runtimeDependencyManifestStream = new FileStream(runtimeDependencyManifestFile, FileMode.Open, FileAccess.Read))
+            //        {
+            //            dependencyContext = dependencyContext.Merge(dependencyContextReader.Read(runtimeDependencyManifestStream));
+            //        }
+            //    }
 
-                AddDependencies(dependencyContext, RuntimeEnvironment.StandaloneApplication);
-            }
+            //    AddDependencies(dependencyContext, RuntimeEnvironment.StandaloneApplication);
+            //}
 
             string entryAssemblyPath = dependencyManifestFile.Replace(".deps.json", ".dll");
 
@@ -425,6 +426,8 @@ public class CoreCLREmbedding
 
     public static void Initialize(IntPtr context, IntPtr exception)
     {
+        Console.WriteLine("enter key :");
+        Console.ReadKey();
         try
         {
             DebugMessage("CoreCLREmbedding::Initialize (CLR) - Starting");
@@ -464,7 +467,7 @@ public class CoreCLREmbedding
         {
             return null;
         }
-     
+
         DebugMessage("CoreCLREmbedding::Assembly_Resolving (CLR) - Starting resolve process for {0}", arg2.Name);
 
         if (!String.IsNullOrEmpty(Resolver.GetAssemblyPath(arg2.Name)))
@@ -718,7 +721,12 @@ public class CoreCLREmbedding
         if (task.IsFaulted)
         {
             taskStatus = TaskStatus.Faulted;
-
+            foreach (var innerException in task.Exception.Flatten().InnerExceptions)
+            {
+               DebugMessage("=============================================");
+               DebugMessage("CoreCLREmbedding::TaskCompleted With Exception:{0}", innerException.ToString());
+            }
+            
             try
             {
                 resultObject = MarshalCLRToV8(task.Exception, out v8Type);
